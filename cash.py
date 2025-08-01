@@ -31,8 +31,8 @@ def generate_iif(df):
         memo = f"Till {till} | Invoice {docnum}"
 
         # Write the transaction
-        output.write(f"TRNS\tCASH\t{trns_date}\tCash in Drawer\tWalk In\t{memo}\t{amount}\t{docnum}\n")
-        output.write(f"SPL\tCASH\t{trns_date}\tAccounts Receivable\tWalk In\t{memo}\t{-amount}\t\t\n")
+        output.write(f"TRNS\tPAYMENT\t{trns_date}\tCash in Drawer\tWalk In\t{memo}\t{amount}\t{docnum}\n")
+        output.write(f"SPL\tPAYMENT\t{trns_date}\tAccounts Receivable\tWalk In\t{memo}\t{-amount}\t\t\n")
         output.write("ENDTRNS\n")
 
     return output.getvalue()
