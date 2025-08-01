@@ -23,6 +23,7 @@ def generate_iif(df):
     output.write("!ENDTRNS\n")
 
     for _, row in df.iterrows():
+        df["Date"] = pd.to_datetime(df["Date"], format="%d-%b-%Y %I.%M.%S %p", errors="coerce")
         trns_date = pd.to_datetime(row['Date']).strftime("%m/%d/%Y")
         amount = float(row['Amount'])
         docnum = str(row['Bill No.'])
