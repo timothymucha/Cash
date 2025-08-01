@@ -1,60 +1,90 @@
 import streamlit as st
 import pandas as pd
 from io import StringIO
-from datetime import datetime
+from openpyxl import load_workbook
 
-st.set_page_config(page_title="Mnarani Excel to QuickBooks IIF", layout="wide")
-st.title("📄 Convert Mnarani Excel Statement to QuickBooks IIF")
+st.set_page_config(page_title="Cash Sales to IIF", layout="wide")
+st.title("🧾 Convert Cash Sales XLSX to QuickBooks IIF")
 
-uploaded_file = st.file_uploader("Upload Excel (.xlsx) File", type=["xlsx"])
+def read_excel_unmerged(file):
+    wb = load_workbook(file, data_only=True)
+    ws = wb.active
 
-def generate_iif(df):
+    # Fill merged cell values
+    for merged_cell_range in ws.merged_cells.ranges:
+        merged_cell = ws[merged_cell_range.coord]
+        first_cell_value = merged_cell[0][0].value
+        for row in merged_cell:
+            for cell in row:
+                cell.value = first_cell_value
+        ws.unmerge_cells(merged_cell_range.coord)
+
+    # Convert to dataframe from row 17 onwards
+    data = []
+    for row in ws.iter_rows(min_row=17, values_only=True):
+        data.append(row)
+    df = pd.DataFrame(data)
+
+    # Manually assign expected columns based on known structure
+    df.columns = [f"col_{i}" for i in range(len(df.columns))]
+    df = df.rename(columns={
+        "col_4": "Till",        # Column E
+        "col_9": "Bill Date",   # Column J
+        "col_15": "Bill No.",   # Column P
+        "col_25": "Amount"      # Column Z
+    })
+
+    # Drop rows until 'Cash' ends
+    df = df[df["Till"].notna()]
+    df = df[df["Till"].astype(str).str.lower().str.contains("cash", na=False)]
+
+    # Keep relevant columns
+    df = df[["Till", "Bill Date", "Bill No.", "Amount"]]
+    df = df.dropna(subset=["Bill Date", "Bill No.", "Amount"])
+
+    return df
+
+def convert_to_iif(df):
     output = StringIO()
-
-    # IIF headers
     output.write("!TRNS\tTRNSTYPE\tDATE\tACCNT\tNAME\tMEMO\tAMOUNT\tDOCNUM\n")
     output.write("!SPL\tTRNSTYPE\tDATE\tACCNT\tNAME\tMEMO\tAMOUNT\tQNTY\tINVITEM\n")
     output.write("!ENDTRNS\n")
 
     for _, row in df.iterrows():
-        date = row["Bill Date"].strftime("%m/%d/%Y")
-        docnum = row["Bill No."]
-        amount = float(row["Amount"])
-        memo = f"Till: {row['Till#']} - Bill No: {docnum}"
-        name = "Walk In"
+        try:
+            date_str = pd.to_datetime(row["Bill Date"]).strftime("%m/%d/%Y")
+        except:
+            continue  # Skip bad date rows
 
-        output.write(f"TRNS\tRECEIPT\t{date}\tUndeposited Funds\t{name}\t{memo}\t{amount:.2f}\t{docnum}\n")
-        output.write(f"SPL\tRECEIPT\t{date}\tRevenue:Cash Sales\t{name}\t{memo}\t{-amount:.2f}\t\t\n")
+        docnum = str(row["Bill No."]).strip()
+        memo = f"Till: {row['Till']}"
+        amount = float(row["Amount"])
+
+        output.write(f"TRNS\tCASH\t{date_str}\tCash in Drawer\tWalk In\t{memo}\t{amount:.2f}\t{docnum}\n")
+        output.write(f"SPL\tCASH\t{date_str}\tAccounts Receivable\tWalk In\t{memo}\t{-amount:.2f}\t\t\n")
         output.write("ENDTRNS\n")
 
     return output.getvalue()
 
+uploaded_file = st.file_uploader("📂 Upload Sales XLSX File", type=["xlsx"])
+
 if uploaded_file:
     try:
-        # Read Excel skipping to row 17 (skiprows=16)
-        raw_df = pd.read_excel(uploaded_file, header=None, skiprows=16)
+        df = read_excel_unmerged(uploaded_file)
 
-        # Extract relevant columns
-        df = raw_df.iloc[:, [4, 9, 15, 25]]  # E, J, P, Z
-        df.columns = ["Till#", "Bill Date", "Bill No.", "Amount"]
+        if df.empty:
+            st.error("🚫 No cash transactions found or failed to extract data. Check file format.")
+        else:
+            st.success("✅ Data extracted successfully.")
+            st.subheader("🔍 Preview (First 10 rows)")
+            st.dataframe(df.head(10))
 
-        # Stop when Till# becomes NaN (end of cash)
-        df = df[df["Till#"].notna()]
-
-        # Clean dates
-        df["Bill Date"] = pd.to_datetime(df["Bill Date"], errors="coerce")
-        df = df[df["Bill Date"].notna()]
-
-        # Preview first 10 rows
-        st.subheader("🔍 Data Preview (First 10 Rows)")
-        st.dataframe(df.head(10), use_container_width=True)
-
-        # Generate IIF file
-        iif_data = generate_iif(df)
-        st.subheader("⬇️ Download IIF")
-        st.download_button("Download IIF File", iif_data, file_name="mnarani_cash_sales.iif", mime="text/plain")
-
+            iif_content = convert_to_iif(df)
+            st.download_button(
+                label="⬇️ Download IIF File",
+                data=iif_content,
+                file_name="cash_sales.iif",
+                mime="text/plain"
+            )
     except Exception as e:
-        st.error(f"❌ Error reading file: {e}")
-else:
-    st.info("📤 Upload an Excel file to begin.")
+        st.error(f"❌ Failed to process file: {e}")
