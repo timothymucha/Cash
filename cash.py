@@ -1,58 +1,60 @@
-# cash_sales_to_iif.py
-
 import streamlit as st
 import pandas as pd
 from io import StringIO
 from datetime import datetime
 
-st.set_page_config(page_title="Cash Sales to QuickBooks IIF", layout="wide")
-st.title("🧾 Convert Cash Sales Statement to QuickBooks IIF")
+st.set_page_config(page_title="Mnarani Excel to QuickBooks IIF", layout="wide")
+st.title("📄 Convert Mnarani Excel Statement to QuickBooks IIF")
 
-uploaded_file = st.file_uploader("Upload Excel Statement", type=["xlsx"])
+uploaded_file = st.file_uploader("Upload Excel (.xlsx) File", type=["xlsx"])
+
+def generate_iif(df):
+    output = StringIO()
+
+    # IIF headers
+    output.write("!TRNS\tTRNSTYPE\tDATE\tACCNT\tNAME\tMEMO\tAMOUNT\tDOCNUM\n")
+    output.write("!SPL\tTRNSTYPE\tDATE\tACCNT\tNAME\tMEMO\tAMOUNT\tQNTY\tINVITEM\n")
+    output.write("!ENDTRNS\n")
+
+    for _, row in df.iterrows():
+        date = row["Bill Date"].strftime("%m/%d/%Y")
+        docnum = row["Bill No."]
+        amount = float(row["Amount"])
+        memo = f"Till: {row['Till#']} - Bill No: {docnum}"
+        name = "Walk In"
+
+        output.write(f"TRNS\tRECEIPT\t{date}\tUndeposited Funds\t{name}\t{memo}\t{amount:.2f}\t{docnum}\n")
+        output.write(f"SPL\tRECEIPT\t{date}\tRevenue:Cash Sales\t{name}\t{memo}\t{-amount:.2f}\t\t\n")
+        output.write("ENDTRNS\n")
+
+    return output.getvalue()
 
 if uploaded_file:
     try:
-        # Read from row 17 onward
-        df = pd.read_excel(uploaded_file, header=None, skiprows=16)
+        # Read Excel skipping to row 17 (skiprows=16)
+        raw_df = pd.read_excel(uploaded_file, header=None, skiprows=16)
 
-        # Manually assign key columns
-        df = df.rename(columns={
-            4: 'Till#',       # Column E
-            9: 'Bill Date',   # Column J
-            15: 'Bill No.',   # Column P
-            25: 'Amount'      # Column Z
-        })
+        # Extract relevant columns
+        df = raw_df.iloc[:, [4, 9, 15, 25]]  # E, J, P, Z
+        df.columns = ["Till#", "Bill Date", "Bill No.", "Amount"]
 
-        # Drop rows with missing values in required fields
-        df = df[['Till#', 'Bill Date', 'Bill No.', 'Amount']].dropna()
+        # Stop when Till# becomes NaN (end of cash)
+        df = df[df["Till#"].notna()]
 
-        # Clean and convert date
-        df['Bill Date'] = pd.to_datetime(df['Bill Date'], errors='coerce')
-        df = df.dropna(subset=['Bill Date'])
+        # Clean dates
+        df["Bill Date"] = pd.to_datetime(df["Bill Date"], errors="coerce")
+        df = df[df["Bill Date"].notna()]
 
-        # Sort and convert amount
-        df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce')
-        df = df[df['Amount'] > 0]
+        # Preview first 10 rows
+        st.subheader("🔍 Data Preview (First 10 Rows)")
+        st.dataframe(df.head(10), use_container_width=True)
 
-        # Format IIF
-        output = StringIO()
-        output.write("!TRNS\tTRNSTYPE\tDATE\tACCNT\tNAME\tMEMO\tAMOUNT\tDOCNUM\n")
-        output.write("!SPL\tTRNSTYPE\tDATE\tACCNT\tNAME\tMEMO\tAMOUNT\tQNTY\tINVITEM\n")
-        output.write("!ENDTRNS\n")
-
-        for _, row in df.iterrows():
-            date = row['Bill Date'].strftime('%m/%d/%Y')
-            memo = f"Till {row['Till#']}"
-            amount = round(row['Amount'], 2)
-            docnum = row['Bill No.']
-
-            output.write(f"TRNS\tCASH\t{date}\tCash in Drawer\tWalk In\t{memo}\t{amount}\t{docnum}\n")
-            output.write(f"SPL\tCASH\t{date}\tAccounts Receivable\tWalk In\t{memo}\t{-amount}\t\t\n")
-            output.write("ENDTRNS\n")
-
-        st.download_button("⬇️ Download IIF File", output.getvalue(), file_name="cash_sales.iif")
-
-        st.success("✅ File processed successfully!")
+        # Generate IIF file
+        iif_data = generate_iif(df)
+        st.subheader("⬇️ Download IIF")
+        st.download_button("Download IIF File", iif_data, file_name="mnarani_cash_sales.iif", mime="text/plain")
 
     except Exception as e:
-        st.error(f"❌ Failed to process file: {e}")
+        st.error(f"❌ Error reading file: {e}")
+else:
+    st.info("📤 Upload an Excel file to begin.")
