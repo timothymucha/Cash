@@ -23,8 +23,7 @@ def generate_iif(df):
     output.write("!ENDTRNS\n")
 
     for _, row in df.iterrows():
-        df["Date"] = pd.to_datetime(df["Date"], format="%d-%b-%Y %I.%M.%S %p", errors="coerce")
-        trns_date = pd.to_datetime(row['Date']).strftime("%m/%d/%Y")
+        trns_date = row['Date'].strftime("%m/%d/%Y")
         amount = float(row['Amount'])
         docnum = str(row['Bill No.'])
         till = str(row['Till No'])
@@ -57,8 +56,11 @@ if uploaded_file:
         # Truncate at the first blank row
         df = truncate_at_blank(df)
 
-        # Drop rows where essential fields are missing (likely at the bottom)
+        # Drop rows where essential fields are missing
         df.dropna(subset=["Date", "Amount"], inplace=True)
+
+        # Convert Date
+        df["Date"] = pd.to_datetime(df["Date"], format="%d-%b-%Y %I.%M.%S %p", errors="coerce")
 
         st.subheader("🧾 Preview: First 10 Cleaned Cash Sales")
         st.dataframe(df.head(10))
