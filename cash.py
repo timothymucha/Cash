@@ -5,75 +5,52 @@ import pandas as pd
 from io import StringIO
 from datetime import datetime
 
-st.set_page_config(page_title="Excel to IIF - Cash Sales", layout="wide")
-st.title("🧾 Convert Excel Cash Sales to QuickBooks IIF")
+st.set_page_config(page_title="Cash Sales to QuickBooks IIF", layout="wide")
+st.title("🧾 Convert Cash Sales Excel to QuickBooks IIF")
 
-uploaded_file = st.file_uploader("Upload your Excel (.xlsx) sales statement", type="xlsx")
-
-def clean_excel_sheet(df_raw):
-    # Unmerge-style fix: fill down merged rows
-    df_clean = df_raw.ffill()
-
-    # Try to detect the header row (example: it might start with 'Bill No' or similar)
-    header_row_index = df_clean[df_clean.iloc[:, 0].astype(str).str.contains("Bill", case=False, na=False)].index.min()
-    if pd.isna(header_row_index):
-        st.error("Could not detect header row. Please ensure 'Bill No' or similar appears in a column header.")
-        return None
-
-    df_clean.columns = df_clean.iloc[header_row_index]
-    df_clean = df_clean.iloc[header_row_index + 1:]
-
-    # Drop empty columns and rows
-    df_clean = df_clean.dropna(axis=1, how='all').dropna(axis=0, how='all')
-
-    return df_clean
-
-def convert_to_iif(df):
-    output = StringIO()
-
-    # IIF Headers
-    output.write("!TRNS\tTRNSTYPE\tDATE\tACCNT\tNAME\tMEMO\tAMOUNT\tDOCNUM\n")
-    output.write("!SPL\tTRNSTYPE\tDATE\tACCNT\tNAME\tMEMO\tAMOUNT\tQNTY\tINVITEM\n")
-    output.write("!ENDTRNS\n")
-
-    for _, row in df.iterrows():
-        try:
-            bill_date = pd.to_datetime(row['Bill Date']).strftime('%m/%d/%Y')
-            amount = float(row['Amount'])
-            docnum = str(row['Bill No'])
-            memo = str(row.get('Memo', 'Cash Sale'))
-
-            output.write(f"TRNS\tPAYMENT\t{bill_date}\tCash in Drawer\tWalk In\t{memo}\t{amount:.2f}\t{docnum}\n")
-            output.write(f"SPL\tPAYMENT\t{bill_date}\tAccounts Receivable\tWalk In\t{memo}\t{-amount:.2f}\t\t\n")
-            output.write("ENDTRNS\n")
-        except Exception as e:
-            st.warning(f"Skipped a row due to error: {e}")
-    
-    return output.getvalue()
+uploaded_file = st.file_uploader("Upload Excel file with cash sales", type=["xlsx"])
 
 if uploaded_file:
     try:
-        # Load and clean Excel sheet
-        df_raw = pd.read_excel(uploaded_file, header=None)
-        df_clean = clean_excel_sheet(df_raw)
+        # Read with header rows 12 and 13
+        df_raw = pd.read_excel(uploaded_file, header=[11, 12], skiprows=0)
 
-        if df_clean is not None:
-            # Only cash payments
-            df_cash = df_clean[df_clean['Payment Mode'].astype(str).str.lower() == 'cash']
+        # Remove rows before row 17 (0-indexed as 16)
+        df = df_raw.iloc[16:].copy()
+        df.columns = [' '.join(col).strip() for col in df.columns.values]
 
-            required_columns = ['Bill No', 'Bill Date', 'Amount']
-            if not all(col in df_cash.columns for col in required_columns):
-                st.error(f"Missing required columns. Ensure your file contains: {required_columns}")
-            else:
-                iif_data = convert_to_iif(df_cash)
+        # Extract only Cash transactions
+        cash_rows = df[df.iloc[:, 0].astype(str).str.contains("cash", case=False, na=False)]
 
-                st.download_button(
-                    label="📥 Download IIF file",
-                    data=iif_data,
-                    file_name="cash_sales.iif",
-                    mime="text/plain"
-                )
+        # Extract relevant columns
+        till_col = 'Till# Till#'         # Column E
+        date_col = 'Bill Date Bill Date' # Column J
+        bill_col = 'Bill No. Bill No.'   # Column P
+        amount_col = 'Amount Amount'     # Column Z
 
-                st.success("✅ Conversion complete! Click above to download the .IIF file.")
+        df_cash = cash_rows[[till_col, date_col, bill_col, amount_col]].copy()
+        df_cash.columns = ['Till', 'Bill Date', 'Bill No', 'Amount']
+
+        # Format date
+        df_cash['Date'] = pd.to_datetime(df_cash['Bill Date'], errors='coerce').dt.strftime('%m/%d/%Y')
+
+        # Filter only rows with valid amounts
+        df_cash = df_cash[pd.to_numeric(df_cash['Amount'], errors='coerce').notnull()]
+
+        # === Generate IIF ===
+        output = StringIO()
+        output.write("!TRNS\tTRNSTYPE\tDATE\tACCNT\tNAME\tMEMO\tAMOUNT\tDOCNUM\n")
+        output.write("!SPL\tTRNSTYPE\tDATE\tACCNT\tNAME\tMEMO\tAMOUNT\tQNTY\tINVITEM\n")
+        output.write("!ENDTRNS\n")
+
+        for _, row in df_cash.iterrows():
+            memo = f"Till: {row['Till']} | Bill: {row['Bill No']}"
+            output.write(f"TRNS\tCASH SALE\t{row['Date']}\tCash in Drawer\tWalk In\t{memo}\t{row['Amount']}\t{row['Bill No']}\n")
+            output.write(f"SPL\tCASH SALE\t{row['Date']}\tAccounts Receivable\tWalk In\t{memo}\t{-float(row['Amount'])}\t\t\n")
+            output.write("ENDTRNS\n")
+
+        st.success("✅ IIF file generated successfully.")
+        st.download_button("Download .IIF file", output.getvalue(), file_name="cash_sales.iif", mime="text/plain")
+
     except Exception as e:
-        st.error(f"❌ Error processing file: {e}")
+        st.error(f"⚠️ Failed to process file: {e}")
