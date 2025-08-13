@@ -24,7 +24,7 @@ def generate_iif(df):
 
     for _, row in df.iterrows():
         trns_date = row['Date'].strftime("%m/%d/%Y")
-        amount = float(row['Amount'])
+        amount = float(str(row['Amount']).replace(",", ""))
         docnum = str(row['Bill No.'])
         till = str(row['Till No'])
 
